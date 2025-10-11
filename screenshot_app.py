@@ -1,9 +1,8 @@
-
 import google.generativeai as genai
 import mss
 import os
-from pynput import keyboard
 from PIL import Image
+import sys
 
 # IMPORTANT: Replace with your actual Gemini API key
 GEMINI_API_KEY = "AIzaSyB4yPcHciQ1qmiUBPnihDh3UQFMqNpTX70"
@@ -14,7 +13,7 @@ try:
 except Exception as e:
     print(f"Error configuring Gemini API: {e}")
     print("Please make sure you have set your GEMINI_API_KEY correctly.")
-    exit()
+    sys.exit()
 
 def take_screenshot():
     """Takes a screenshot and saves it as screenshot.png."""
@@ -23,15 +22,15 @@ def take_screenshot():
         print(f"Screenshot saved as {filename}")
         return filename
 
-def describe_screenshot():
-    """Describes the screenshot using the Gemini API."""
+def describe_screenshot(question):
+    """Describes the screenshot using the Gemini API based on a user's question."""
     print("Analyzing screenshot...")
     try:
         img = Image.open("screenshot.png")
-        response = model.generate_content(["What is in this image?", img])
-        print("\n--- Image Description ---")
+        response = model.generate_content([question, img])
+        print("\n--- Gemini's Answer ---")
         print(response.text)
-        print("-------------------------\n")
+        print("-----------------------\n")
     except Exception as e:
         print(f"Error generating content: {e}")
     finally:
@@ -39,29 +38,16 @@ def describe_screenshot():
         if os.path.exists("screenshot.png"):
             os.remove("screenshot.png")
 
-def on_press(key):
-    """Handles key press events."""
-    if key == keyboard.Key.enter:
-        print("Enter key pressed, taking screenshot...")
-        take_screenshot()
-        describe_screenshot()
-
-def on_release(key):
-    """Handles key release events."""
-    if key == keyboard.Key.esc:
-        # Stop listener
-        return False
-
 def main():
     """Main function to run the application."""
-    print("Press Enter to take a screenshot and get a description.")
-    print("Press Esc to exit.")
+    print("Ask a question about the screen, or type 'exit' to quit.")
+    while True:
+        question = input("> ")
+        if question.lower() in ['exit', 'quit']:
+            break
+        take_screenshot()
+        describe_screenshot(question)
 
-    # Collect events until released
-    with keyboard.Listener(
-            on_press=on_press,
-            on_release=on_release) as listener:
-        listener.join()
 
 if __name__ == "__main__":
     main()
