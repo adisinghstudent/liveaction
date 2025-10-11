@@ -2,7 +2,6 @@
 
 import { useState, useRef, useEffect } from 'react';
 
-// A simple microphone icon component
 const MicrophoneIcon = ({ className }: { className?: string }) => (
   <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
     <path d="M12 14a2 2 0 0 1-2-2V6a2 2 0 1 1 4 0v6a2 2 0 0 1-2 2z" />
@@ -12,145 +11,103 @@ const MicrophoneIcon = ({ className }: { className?: string }) => (
 );
 
 export default function Home() {
-  const [question, setQuestion] = useState('');
   const [response, setResponse] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [isListening, setIsListening] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [error, setError] = useState('');
-  const recognitionRef = useRef<any>(null);
+  
+  const socketRef = useRef<WebSocket | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
-  const startListening = () => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      setError('Speech recognition is not supported in this browser.');
+  useEffect(() => {
+    // Cleanup function to close WebSocket and MediaRecorder on component unmount
+    return () => {
+      socketRef.current?.close();
+      mediaRecorderRef.current?.stop();
+    };
+  }, []);
+
+  const handleTranscription = async () => {
+    if (isRecording) {
+      mediaRecorderRef.current?.stop();
+      setIsRecording(false);
       return;
     }
 
-    if (isListening) {
-      recognitionRef.current?.stop();
-      return;
-    }
-
-    const recognition = new SpeechRecognition();
-    recognitionRef.current = recognition;
-    recognition.interimResults = true;
-
-    recognition.onstart = () => setIsListening(true);
-    recognition.onend = () => {
-      setIsListening(false);
-      recognitionRef.current = null;
-    };
-    recognition.onerror = (event) => {
-      if (event.error === 'not-allowed') {
-        setError('Microphone access denied. Please enable it in your browser site settings.');
-      } else {
-        setError(`Speech recognition error: ${event.error}`);
-      }
-      setIsListening(false);
-    };
-    recognition.onresult = (event) => {
-      const transcript = Array.from(event.results)
-        .map(result => result[0])
-        .map(result => result.transcript)
-        .join('');
-      setQuestion(transcript);
-    };
-
-    recognition.start();
-  };
-
-  const handleListenClick = async () => {
     setError('');
-    if (isListening) {
-      recognitionRef.current?.stop();
-      return;
-    }
-
-    try {
-      // @ts-ignore
-      const permissionStatus = await navigator.permissions.query({ name: 'microphone' });
-      if (permissionStatus.state === 'denied') {
-        setError("Microphone access was denied. Please enable it in your browser's site settings for localhost:3000.");
-        return;
-      }
-      startListening();
-    } catch (e) {
-      console.error("Permissions API not supported, falling back to standard start.", e);
-      startListening(); // Fallback for browsers that don't support Permissions API for microphone
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!question.trim()) return;
-
-    setIsLoading(true);
     setResponse('');
-    setError('');
+    setIsRecording(true);
+    setIsTranscribing(false);
 
     try {
-      const res = await fetch('http://localhost:8000/api/describe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question }),
-      });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      socketRef.current = new WebSocket('ws://localhost:8000/api/audio-stream');
 
-      if (!res.ok || !res.body) {
-        const errorData = res.statusText;
-        throw new Error(errorData || 'An unknown error occurred');
-      }
+      socketRef.current.onopen = () => {
+        console.log("WebSocket connection opened.");
+        mediaRecorderRef.current = new MediaRecorder(stream, { mimeType: 'audio/webm' });
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
+        mediaRecorderRef.current.ondataavailable = (event) => {
+          if (event.data.size > 0 && socketRef.current?.readyState === WebSocket.OPEN) {
+            socketRef.current.send(event.data);
+          }
+        };
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        setResponse(prev => prev + chunk);
-      }
+        mediaRecorderRef.current.onstop = () => {
+          console.log("MediaRecorder stopped.");
+          if (socketRef.current?.readyState === WebSocket.OPEN) {
+            socketRef.current.send("END_OF_STREAM");
+          }
+          stream.getTracks().forEach(track => track.stop()); // Stop microphone access
+          setIsTranscribing(true);
+        };
 
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setIsLoading(false);
+        socketRef.current.onmessage = (event) => {
+          setResponse(prev => prev + event.data);
+        };
+
+        socketRef.current.onerror = (event) => {
+          console.error("WebSocket error:", event);
+          setError("WebSocket connection error. See console for details.");
+        };
+
+        socketRef.current.onclose = () => {
+          console.log("WebSocket connection closed.");
+          setIsTranscribing(false);
+        };
+
+        mediaRecorderRef.current.start(1000); // Send data every 1000ms (1 second)
+      };
+
+    } catch (err) {
+      console.error("Error getting user media:", err);
+      setError("Could not access microphone. Please ensure permission is granted.");
+      setIsRecording(false);
     }
   };
+
+  const getButtonState = () => {
+    if (isRecording) return "Stop Recording";
+    if (isTranscribing) return "Transcribing...";
+    return "Start Recording";
+  }
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center p-6 md:p-24 bg-gray-900 text-white">
       <div className="w-full max-w-2xl">
-        <h1 className="text-4xl font-bold text-center mb-8">ScreenKnow</h1>
+        <h1 className="text-4xl font-bold text-center mb-8">ScreenKnow (Audio)</h1>
         
-        <form onSubmit={handleSubmit} className="w-full">
-          <div className="relative">
-            <textarea
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-              placeholder="Type or click the mic to ask about your screen..."
-              className="w-full p-4 pr-12 rounded-lg bg-gray-800 border border-gray-700 focus:ring-2 focus:ring-blue-500 focus:outline-none transition duration-200"
-              rows={4}
-              disabled={isLoading}
-            />
+        <div className="w-full text-center">
             <button 
               type="button"
-              onClick={handleListenClick}
-              className={`absolute right-3 top-3 p-2 rounded-full transition-colors ${isListening ? 'bg-red-500 text-white' : 'bg-gray-700 hover:bg-gray-600'}`}
-              title="Toggle voice input"
+              onClick={handleTranscription}
+              disabled={isTranscribing}
+              className={`p-4 rounded-full transition-all duration-300 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center mx-auto ${isRecording ? 'bg-red-600 hover:bg-red-700 w-48' : 'bg-blue-600 hover:bg-blue-700 w-48'}`}
             >
-              <MicrophoneIcon className="h-6 w-6" />
+              <MicrophoneIcon className="h-6 w-6 mr-2" />
+              <span>{getButtonState()}</span>
             </button>
-          </div>
-          <button 
-            type="submit"
-            disabled={isLoading || isListening}
-            className="w-full mt-4 p-4 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-gray-500 disabled:cursor-not-allowed font-bold transition duration-200"
-          >
-            {isLoading ? 'Analyzing...' : 'Ask'}
-          </button>
-        </form>
-
-        {isListening && <p className="text-center mt-4 text-blue-400">Listening...</p>}
+        </div>
 
         {error && (
           <div className="mt-8 p-4 rounded-lg bg-red-900 border border-red-700 text-red-200">
