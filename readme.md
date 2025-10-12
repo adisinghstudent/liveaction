@@ -4,7 +4,17 @@
 
 ScreenKnow is a full-stack application that allows you to ask questions about the content on your screen. It uses a FastAPI backend to capture a screenshot and query the Google Gemini API for an analysis, and a Next.js frontend to provide a user interface.
 
+Whatever you see screenknow captures and allows for true context when learning or just browsing.
+
 <img width="1512" height="982" alt="image" src="https://github.com/user-attachments/assets/63decee1-ff47-489c-a9d4-748c9792ac3f" />
+
+Whether you need to ask questions of what things are going to look like or realtime explanations of what you are already seeing, Youtube videos or Design templates.
+
+<img width="1512" height="982" alt="image" src="https://github.com/user-attachments/assets/aa38a5f9-4fe2-4c7a-802b-8ae636509439" />
+
+You can find a short yet simple demo of these two features of Screennow in this youtube video:
+
+https://youtu.be/QeckwpBIptw
 
 ## Prerequisites
 
@@ -81,5 +91,11 @@ The frontend will be running at `http://localhost:3000`.
 2. Type a question into the text box.
 3. Click the "Ask" button and wait for the response.
 
-### macOS Permissions Note
+### macOS Permissions Note ! Important
 The first time the backend takes a screenshot, your Mac may prompt you to grant accessibility permissions to your terminal or IDE. You must grant these permissions for the screenshot functionality to work.
+
+## Live application
+
+The screennow app is live on liveaction.vercel.app!
+powered by liveaction.onrender.com
+! However since this does not ask for screen permission natively, the screen application feature is incorrect and will hallucinate, it does however get you familiar with the interface.
