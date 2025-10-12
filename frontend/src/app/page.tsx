@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
+import Image from 'next/image';
 
 const MicrophoneIcon = ({ className }: { className?: string }) => (
   <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
@@ -69,15 +70,15 @@ export default function Home() {
         let chosenMime: string | undefined = undefined;
         for (const c of candidates) {
           // Some browsers (Safari) may not implement isTypeSupported
-          // @ts-ignore
-          if (typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported(c)) {
+          const MR: any = MediaRecorder as unknown as { isTypeSupported?: (m: string) => boolean };
+          if (typeof MR.isTypeSupported === 'function' && MR.isTypeSupported(c)) {
             chosenMime = c;
             break;
           }
         }
         try {
           mediaRecorderRef.current = new MediaRecorder(stream, chosenMime ? { mimeType: chosenMime } as MediaRecorderOptions : undefined);
-        } catch (e) {
+        } catch {
           // Fallback: no mimeType option
           mediaRecorderRef.current = new MediaRecorder(stream);
         }
@@ -198,11 +199,14 @@ export default function Home() {
                 }
                 if (part.type === 'image') {
                   return (
-                    <img
+                    <Image
                       key={index}
                       src={`data:${part.mime_type};base64,${part.data}`}
                       alt="Generated image"
                       className="rounded-lg"
+                      width={1024}
+                      height={768}
+                      unoptimized
                     />
                   );
                 }
