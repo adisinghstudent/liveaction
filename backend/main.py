@@ -5,11 +5,18 @@ from PIL import Image
 import sys
 import asyncio
 import io
+import json
+import base64
+import traceback
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 # --- Configuration ---
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyB4yPcHciQ1qmiUBPnihDh3UQFMqNpTX70")
+# Load environment variables from a .env file in the backend directory (if present)
+load_dotenv()
+
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 if not GEMINI_API_KEY:
     print("Error: GEMINI_API_KEY not found. Please set it as an environment variable.")
@@ -17,8 +24,8 @@ if not GEMINI_API_KEY:
 
 try:
     genai.configure(api_key=GEMINI_API_KEY)
-    # This model will be used for the multi-modal (audio, image, text) request.
-    model = genai.GenerativeModel('gemini-2.5-flash') # Using user-specified model
+    # Use default text response configuration; inline binary images are not supported via response_mime_type here.
+    model = genai.GenerativeModel('gemini-2.5-flash')
 except Exception as e:
     print(f"Error configuring Gemini API: {e}")
     sys.exit(1)
@@ -48,13 +55,14 @@ def take_screenshot():
 def read_root():
     return {"status": "ScreenKnow Backend is running"}
 
-# --- WebSocket Endpoint for Audio & Vision Streaming ---
+# --- WebSocket Endpoint for Multi-modal Streaming ---
 @app.websocket("/api/audio-stream")
 async def audio_stream(websocket: WebSocket):
     await websocket.accept()
     print("WebSocket connection established.")
     audio_buffer = io.BytesIO()
     screenshot_path = "screenshot.png"
+    generated_image_path = "generated_image.png"
     
     try:
         while True:
@@ -67,42 +75,77 @@ async def audio_stream(websocket: WebSocket):
         
         audio_data = audio_buffer.getvalue()
         if not audio_data:
-            await websocket.send_text("Error: No audio data received.")
+            message = {"type": "error", "data": "No audio data received."}
+            await websocket.send_text(json.dumps(message))
             return
 
         print(f"Received {len(audio_data)} bytes of audio data.")
-        
-        # 2. Take screenshot for additional context
         print("Taking screenshot...")
         take_screenshot()
         
         if not os.path.exists(screenshot_path):
-            await websocket.send_text("Error: Failed to take screenshot.")
+            message = {"type": "error", "data": "Failed to take screenshot."}
+            await websocket.send_text(json.dumps(message))
             return
 
         print("Sending audio and screenshot to Gemini...")
         img = Image.open(screenshot_path)
-        gemini_audio_file = {
-            'mime_type': 'audio/webm',
-            'data': audio_data
-        }
+        gemini_audio_file = {'mime_type': 'audio/webm', 'data': audio_data}
 
-        # 3. Create multi-modal prompt and send to Gemini
-        prompt = "Analyze the user's question from the audio in the context of the attached screen image and provide a concise answer."
+        prompt = (
+            "You are a multi-modal assistant. Analyze the user's audio and the screenshot. "
+            "If helpful, produce an illustrative image (diagram, markup, or visual aid). "
+            "Otherwise, respond with text."
+        )
+        # Ask for a streamed response so we can surface text progressively and any image when produced.
         response_stream = model.generate_content([prompt, gemini_audio_file, img], stream=True)
 
-        # 4. Stream response back to client
+        print("--- Waiting for Gemini Response ---")
         for chunk in response_stream:
-            if chunk.text:
-                await websocket.send_text(chunk.text)
+            print(f"DEBUG: Received chunk: {chunk}")
+            # Newer SDKs can deliver text via chunk.text and data via parts/inline_data.
+            # Prefer parts if available, otherwise fall back to chunk.text when present.
+            parts = getattr(chunk, 'parts', None)
+            if not parts and getattr(chunk, 'text', None):
+                message = {"type": "text", "data": chunk.text}
+                await websocket.send_text(json.dumps(message))
+                continue
+
+            if not parts:
+                continue
+
+            print(f"DEBUG: Chunk parts: {parts}")
+            for part in parts:
+                if part.text:
+                    print(f"DEBUG: Found text part: {part.text}")
+                    message = {"type": "text", "data": part.text}
+                    await websocket.send_text(json.dumps(message))
+                elif part.inline_data:
+                    print("DEBUG: Found image part!")
+                    image_bytes = part.inline_data.data
+                    
+                    # Save the image to a file for debugging
+                    print(f"DEBUG: Saving generated image to {generated_image_path}")
+                    with open(generated_image_path, "wb") as f:
+                        f.write(image_bytes)
+
+                    base64_image = base64.b64encode(image_bytes).decode('utf-8')
+                    mime_type = part.inline_data.mime_type or 'image/png'
+                    message = {"type": "image", "mime_type": mime_type, "data": base64_image}
+                    await websocket.send_text(json.dumps(message))
+        print("--- Finished Processing Gemini Response ---")
 
     except WebSocketDisconnect:
         print("Client disconnected.")
     except Exception as e:
-        print(f"An error occurred in WebSocket: {e}")
-        await websocket.send_text(f"Error: {str(e)}")
+        print(f"An error occurred in WebSocket. Type: {type(e).__name__}")
+        traceback.print_exc()
+        message = {"type": "error", "data": f"A backend error occurred. Check server logs. Type: {type(e).__name__}"}
+        try:
+            await websocket.send_text(json.dumps(message))
+        except Exception as send_e:
+            print(f"Failed to send error to client: {send_e}")
     finally:
-        # 5. Cleanup
         if os.path.exists(screenshot_path):
             os.remove(screenshot_path)
             print(f"Removed screenshot file: {screenshot_path}")

@@ -10,8 +10,14 @@ const MicrophoneIcon = ({ className }: { className?: string }) => (
   </svg>
 );
 
+interface ResponsePart {
+  type: 'text' | 'image' | 'error';
+  data: string;
+  mime_type?: string;
+}
+
 export default function Home() {
-  const [response, setResponse] = useState('');
+  const [responseParts, setResponseParts] = useState<ResponsePart[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [error, setError] = useState('');
@@ -20,7 +26,6 @@ export default function Home() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
   useEffect(() => {
-    // Cleanup function to close WebSocket and MediaRecorder on component unmount
     return () => {
       socketRef.current?.close();
       mediaRecorderRef.current?.stop();
@@ -35,7 +40,7 @@ export default function Home() {
     }
 
     setError('');
-    setResponse('');
+    setResponseParts([]);
     setIsRecording(true);
     setIsTranscribing(false);
 
@@ -58,12 +63,28 @@ export default function Home() {
           if (socketRef.current?.readyState === WebSocket.OPEN) {
             socketRef.current.send("END_OF_STREAM");
           }
-          stream.getTracks().forEach(track => track.stop()); // Stop microphone access
+          stream.getTracks().forEach(track => track.stop());
           setIsTranscribing(true);
         };
 
         socketRef.current.onmessage = (event) => {
-          setResponse(prev => prev + event.data);
+          const message: ResponsePart = JSON.parse(event.data);
+          if (message.type === 'error') {
+            setError(message.data);
+            return;
+          }
+
+          setResponseParts(prevParts => {
+            // For streaming text, append to the last text part if it exists
+            const lastPart = prevParts[prevParts.length - 1];
+            if (message.type === 'text' && lastPart?.type === 'text') {
+              const newParts = [...prevParts];
+              newParts[newParts.length - 1] = { ...lastPart, data: lastPart.data + message.data };
+              return newParts;
+            }
+            // Otherwise, add a new part
+            return [...prevParts, message];
+          });
         };
 
         socketRef.current.onerror = (event) => {
@@ -76,7 +97,7 @@ export default function Home() {
           setIsTranscribing(false);
         };
 
-        mediaRecorderRef.current.start(1000); // Send data every 1000ms (1 second)
+        mediaRecorderRef.current.start(1000);
       };
 
     } catch (err) {
@@ -93,16 +114,20 @@ export default function Home() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center p-6 md:p-24 bg-gray-900 text-white">
-      <div className="w-full max-w-2xl">
-        <h1 className="text-4xl font-bold text-center mb-8">ScreenKnow (Audio)</h1>
+    <main className="flex min-h-screen flex-col items-center justify-center p-6 md:p-24 bg-transparent text-black">
+      <div className="w-full max-w-2xl rounded-2xl border border-white/20 dark:border-white/10 bg-white/10 dark:bg-white/5 backdrop-blur-xl shadow-xl">
+        <h1 className="text-4xl font-bold text-center mb-8 pt-8">ScreenKnow</h1>
         
         <div className="w-full text-center">
             <button 
               type="button"
               onClick={handleTranscription}
               disabled={isTranscribing}
-              className={`p-4 rounded-full transition-all duration-300 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center mx-auto ${isRecording ? 'bg-red-600 hover:bg-red-700 w-48' : 'bg-blue-600 hover:bg-blue-700 w-48'}`}
+              className={`p-4 rounded-full transition-all duration-300 ease-in-out disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center mx-auto w-48 border text-black ${
+                isRecording
+                  ? 'bg-white hover:bg-white/90 border-black'
+                  : 'bg-white hover:bg-white/80 border-black/40'
+              }`}
             >
               <MicrophoneIcon className="h-6 w-6 mr-2" />
               <span>{getButtonState()}</span>
@@ -110,18 +135,27 @@ export default function Home() {
         </div>
 
         {error && (
-          <div className="mt-8 p-4 rounded-lg bg-red-900 border border-red-700 text-red-200">
+          <div className="mt-8 p-4 rounded-lg bg-white/10 dark:bg-white/5 border border-white/20 text-black backdrop-blur-xl">
             <p className="font-bold">Error:</p>
             <p>{error}</p>
           </div>
         )}
 
-        {response && (
-          <div className="mt-8 p-4 rounded-lg bg-gray-800 border border-gray-700">
+        {responseParts.length > 0 && (
+          <div className="mt-8 p-4 rounded-lg bg-white/10 dark:bg-white/5 border border-white/20 space-y-4 backdrop-blur-xl text-black">
             <p className="font-bold">Answer:</p>
-            <p className="mt-2 whitespace-pre-wrap">{response}</p>
+            {responseParts.map((part, index) => {
+              if (part.type === 'text') {
+                return <p key={index} className="whitespace-pre-wrap">{part.data}</p>;
+              }
+              if (part.type === 'image') {
+                return <img key={index} src={`data:${part.mime_type};base64,${part.data}`} alt="Generated image" className="rounded-lg" />;
+              }
+              return null;
+            })}
           </div>
         )}
+        <div className="h-8" />
       </div>
     </main>
   );

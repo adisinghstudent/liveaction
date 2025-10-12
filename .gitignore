@@ -22,3 +22,7 @@ screenshot.png
 .DS_Store
 Thumbs.db
 
+# Env files (secrets)
+.env
+*.env
+backend/.env
