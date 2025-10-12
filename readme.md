@@ -96,6 +96,8 @@ The first time the backend takes a screenshot, your Mac may prompt you to grant 
 
 ## Live application
 
-The screennow app is live on liveaction.vercel.app!
-powered by liveaction.onrender.com
+The screennow app is live on 
+https://liveaction.vercel.app!
+powered by https://liveaction.onrender.com
+
 ! However since this does not ask for screen permission natively, the screen application feature is incorrect and will hallucinate, it does however get you familiar with the interface.
