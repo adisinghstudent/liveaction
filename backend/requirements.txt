@@ -4,3 +4,4 @@ google-generativeai
 Pillow
 mss
 python-multipart
+python-dotenv

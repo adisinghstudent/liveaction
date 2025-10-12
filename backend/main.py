@@ -24,8 +24,9 @@ if not GEMINI_API_KEY:
 
 try:
     genai.configure(api_key=GEMINI_API_KEY)
-    # Use default text response configuration; inline binary images are not supported via response_mime_type here.
-    model = genai.GenerativeModel('gemini-2.5-flash')
+    # Two-model pipeline: multimodal text + image generation
+    model_text = genai.GenerativeModel('gemini-2.5-flash')
+    model_image = genai.GenerativeModel('gemini-2.5-flash-image')
 except Exception as e:
     print(f"Error configuring Gemini API: {e}")
     sys.exit(1)
@@ -94,21 +95,30 @@ async def audio_stream(websocket: WebSocket):
 
         prompt = (
             "You are a multi-modal assistant. Analyze the user's audio and the screenshot. "
-            "If helpful, produce an illustrative image (diagram, markup, or visual aid). "
-            "Otherwise, respond with text."
+            "Provide a helpful text answer. If a visual image would significantly help, end your response with a single line: "
+            "IMAGE_PROMPT: <very concise text-to-image prompt>."
         )
-        # Ask for a streamed response so we can surface text progressively and any image when produced.
-        response_stream = model.generate_content([prompt, gemini_audio_file, img], stream=True)
+        # Ask for a streamed response so we can surface text progressively and collect an image prompt.
+        response_stream = model_text.generate_content([prompt, gemini_audio_file, img], stream=True)
 
         print("--- Waiting for Gemini Response ---")
+        collected_text = ""
+
+        async def process_text(text: str):
+            nonlocal collected_text
+            if not text:
+                return
+            collected_text += text
+            message = {"type": "text", "data": text}
+            await websocket.send_text(json.dumps(message))
+
         for chunk in response_stream:
             print(f"DEBUG: Received chunk: {chunk}")
             # Newer SDKs can deliver text via chunk.text and data via parts/inline_data.
             # Prefer parts if available, otherwise fall back to chunk.text when present.
             parts = getattr(chunk, 'parts', None)
             if not parts and getattr(chunk, 'text', None):
-                message = {"type": "text", "data": chunk.text}
-                await websocket.send_text(json.dumps(message))
+                await process_text(chunk.text)
                 continue
 
             if not parts:
@@ -118,8 +128,7 @@ async def audio_stream(websocket: WebSocket):
             for part in parts:
                 if part.text:
                     print(f"DEBUG: Found text part: {part.text}")
-                    message = {"type": "text", "data": part.text}
-                    await websocket.send_text(json.dumps(message))
+                    await process_text(part.text)
                 elif part.inline_data:
                     print("DEBUG: Found image part!")
                     image_bytes = part.inline_data.data
@@ -134,6 +143,41 @@ async def audio_stream(websocket: WebSocket):
                     message = {"type": "image", "mime_type": mime_type, "data": base64_image}
                     await websocket.send_text(json.dumps(message))
         print("--- Finished Processing Gemini Response ---")
+
+        # Attempt follow-up image generation with gemini-2.5-flash-image if IMAGE_PROMPT was provided.
+        try:
+            image_prompt = None
+            for line in collected_text.splitlines():
+                if line.strip().upper().startswith("IMAGE_PROMPT:"):
+                    image_prompt = line.split(":", 1)[1].strip()
+                    break
+            if image_prompt:
+                print(f"Found IMAGE_PROMPT. Generating image with flash-image: {image_prompt}")
+                img_response = model_image.generate_content([image_prompt])
+                parts = getattr(img_response, 'parts', None)
+                if not parts:
+                    # Fallback: some SDK versions put data under candidates[0].content.parts
+                    candidates = getattr(img_response, 'candidates', [])
+                    if candidates:
+                        parts = candidates[0].content.parts
+                if parts:
+                    for part in parts:
+                        if getattr(part, 'inline_data', None):
+                            mime_type = part.inline_data.mime_type or 'image/png'
+                            image_bytes = part.inline_data.data
+                            with open(generated_image_path, "wb") as f:
+                                f.write(image_bytes)
+                            base64_image = base64.b64encode(image_bytes).decode('utf-8')
+                            await websocket.send_text(json.dumps({
+                                "type": "image",
+                                "mime_type": mime_type,
+                                "data": base64_image,
+                            }))
+                            break
+                else:
+                    print("No inline image data returned from image model.")
+        except Exception as e:
+            print(f"Image generation follow-up failed: {e}")
 
     except WebSocketDisconnect:
         print("Client disconnected.")
