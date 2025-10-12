@@ -53,7 +53,15 @@ export default function Home() {
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      socketRef.current = new WebSocket('ws://localhost:8000/api/audio-stream');
+      const getWsUrl = () => {
+        const base = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://liveaction.onrender.com';
+        const normalized = base.replace(/\/$/, '');
+        const wsBase = normalized.startsWith('https')
+          ? normalized.replace(/^https/, 'wss')
+          : normalized.replace(/^http/, 'ws');
+        return `${wsBase}/api/audio-stream`;
+      };
+      socketRef.current = new WebSocket(getWsUrl());
 
       socketRef.current.onopen = () => {
         console.log("WebSocket connection opened.");
@@ -158,8 +166,8 @@ export default function Home() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center p-6 md:p-24 bg-transparent text-black">
-      <div className="w-full max-w-2xl rounded-2xl border border-white/20 dark:border-white/10 bg-white/10 dark:bg-white/5 backdrop-blur-xl shadow-xl">
+    <main className="flex min-h-screen flex-col items-center justify-center p-6 md:p-24 bg-white text-black">
+      <div className="w-full max-w-2xl rounded-2xl border border-black/10 bg-white backdrop-blur-xl shadow-xl">
         <h1 className="text-2xl font-normal text-center mb-8 pt-8">ScreenKnow</h1>
         
         <div className="w-full text-center">
@@ -179,14 +187,14 @@ export default function Home() {
         </div>
 
         {error && (
-          <div className="mt-8 p-4 rounded-lg bg-white/10 dark:bg-white/5 border border-white/20 text-black backdrop-blur-xl">
+          <div className="mt-8 p-4 rounded-lg bg-red-50 border border-red-200 text-red-800">
             <p className="font-bold">Error:</p>
             <p>{error}</p>
           </div>
         )}
 
         {responseParts.length > 0 && (
-          <div className="mt-8 p-4 rounded-lg bg-white/10 dark:bg-white/5 border border-white/20 space-y-4 backdrop-blur-xl text-black">
+          <div className="mt-8 p-4 rounded-lg bg-gray-50 border border-gray-200 space-y-4 text-black">
             <p className="font-bold">Answer:</p>
             {(() => {
               const hasImage = responseParts.some(p => p.type === 'image');
