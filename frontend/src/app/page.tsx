@@ -70,7 +70,9 @@ export default function Home() {
         let chosenMime: string | undefined = undefined;
         for (const c of candidates) {
           // Some browsers (Safari) may not implement isTypeSupported
-          const MR: any = MediaRecorder as unknown as { isTypeSupported?: (m: string) => boolean };
+          const MR: { isTypeSupported?: (m: string) => boolean } = MediaRecorder as unknown as {
+            isTypeSupported?: (m: string) => boolean;
+          };
           if (typeof MR.isTypeSupported === 'function' && MR.isTypeSupported(c)) {
             chosenMime = c;
             break;
