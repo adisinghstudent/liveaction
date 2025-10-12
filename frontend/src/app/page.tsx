@@ -22,6 +22,12 @@ export default function Home() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [error, setError] = useState('');
   
+  const truncateToWords = (text: string, maxWords: number) => {
+    const words = text.trim().split(/\s+/);
+    if (words.length <= maxWords) return text;
+    return words.slice(0, maxWords).join(' ');
+  };
+  
   const socketRef = useRef<WebSocket | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
@@ -50,7 +56,36 @@ export default function Home() {
 
       socketRef.current.onopen = () => {
         console.log("WebSocket connection opened.");
-        mediaRecorderRef.current = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+        // Pick a supported audio mime type for MediaRecorder
+        const candidates = [
+          'audio/webm;codecs=opus',
+          'audio/webm',
+          'audio/ogg;codecs=opus',
+          'audio/ogg',
+          'audio/mp4',
+          'audio/mpeg',
+          'audio/aac',
+        ];
+        let chosenMime: string | undefined = undefined;
+        for (const c of candidates) {
+          // Some browsers (Safari) may not implement isTypeSupported
+          // @ts-ignore
+          if (typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported(c)) {
+            chosenMime = c;
+            break;
+          }
+        }
+        try {
+          mediaRecorderRef.current = new MediaRecorder(stream, chosenMime ? { mimeType: chosenMime } as MediaRecorderOptions : undefined);
+        } catch (e) {
+          // Fallback: no mimeType option
+          mediaRecorderRef.current = new MediaRecorder(stream);
+        }
+
+        // Send config to backend so it can label audio bytes correctly
+        try {
+          socketRef.current?.send(JSON.stringify({ type: 'config', audio_mime_type: chosenMime || '' }));
+        } catch {}
 
         mediaRecorderRef.current.ondataavailable = (event) => {
           if (event.data.size > 0 && socketRef.current?.readyState === WebSocket.OPEN) {
@@ -67,7 +102,13 @@ export default function Home() {
           setIsTranscribing(true);
         };
 
-        socketRef.current.onmessage = (event) => {
+        const ws = socketRef.current;
+        if (!ws) {
+          console.warn('WebSocket reference lost before handlers attached.');
+          return;
+        }
+
+        ws.onmessage = (event) => {
           const message: ResponsePart = JSON.parse(event.data);
           if (message.type === 'error') {
             setError(message.data);
@@ -87,12 +128,12 @@ export default function Home() {
           });
         };
 
-        socketRef.current.onerror = (event) => {
+        ws.onerror = (event) => {
           console.error("WebSocket error:", event);
           setError("WebSocket connection error. See console for details.");
         };
 
-        socketRef.current.onclose = () => {
+        ws.onclose = () => {
           console.log("WebSocket connection closed.");
           setIsTranscribing(false);
         };
@@ -144,15 +185,30 @@ export default function Home() {
         {responseParts.length > 0 && (
           <div className="mt-8 p-4 rounded-lg bg-white/10 dark:bg-white/5 border border-white/20 space-y-4 backdrop-blur-xl text-black">
             <p className="font-bold">Answer:</p>
-            {responseParts.map((part, index) => {
-              if (part.type === 'text') {
-                return <p key={index} className="whitespace-pre-wrap">{part.data}</p>;
-              }
-              if (part.type === 'image') {
-                return <img key={index} src={`data:${part.mime_type};base64,${part.data}`} alt="Generated image" className="rounded-lg" />;
-              }
-              return null;
-            })}
+            {(() => {
+              const hasImage = responseParts.some(p => p.type === 'image');
+              return responseParts.map((part, index) => {
+                if (part.type === 'text') {
+                  if (hasImage) return null; // Suppress text when image is present
+                  return (
+                    <p key={index} className="whitespace-pre-wrap">
+                      {truncateToWords(part.data, 60)}
+                    </p>
+                  );
+                }
+                if (part.type === 'image') {
+                  return (
+                    <img
+                      key={index}
+                      src={`data:${part.mime_type};base64,${part.data}`}
+                      alt="Generated image"
+                      className="rounded-lg"
+                    />
+                  );
+                }
+                return null;
+              });
+            })()}
           </div>
         )}
         <div className="h-8" />

@@ -34,7 +34,8 @@ except Exception as e:
 # --- FastAPI App Initialization ---
 app = FastAPI()
 
-origins = ["http://localhost:3000", "http://localhost"]
+origins_env = os.environ.get("ALLOWED_ORIGINS")
+origins = [o.strip() for o in origins_env.split(",")] if origins_env else ["*"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -44,6 +45,8 @@ app.add_middleware(
 )
 
 # --- Helper Functions ---
+DISABLE_SCREENSHOT = os.environ.get("DISABLE_SCREENSHOT", "false").lower() == "true"
+
 def take_screenshot():
     """Takes a screenshot and saves it as screenshot.png."""
     with mss.mss() as sct:
@@ -64,15 +67,27 @@ async def audio_stream(websocket: WebSocket):
     audio_buffer = io.BytesIO()
     screenshot_path = "screenshot.png"
     generated_image_path = "generated_image.png"
+    audio_mime_type = None
     
     try:
         while True:
             data = await websocket.receive()
             if 'bytes' in data:
                 audio_buffer.write(data['bytes'])
-            elif 'text' in data and data['text'] == "END_OF_STREAM":
-                print("End of audio stream signal received.")
-                break
+            elif 'text' in data:
+                # Handle control or config messages from the client
+                text = data['text']
+                if text == "END_OF_STREAM":
+                    print("End of audio stream signal received.")
+                    break
+                # Try parse JSON config for mime type, ignore if not JSON
+                try:
+                    obj = json.loads(text)
+                    if isinstance(obj, dict) and obj.get('type') == 'config':
+                        audio_mime_type = obj.get('audio_mime_type') or audio_mime_type
+                        print(f"Configured client audio mime type: {audio_mime_type}")
+                except Exception:
+                    pass
         
         audio_data = audio_buffer.getvalue()
         if not audio_data:
@@ -81,17 +96,21 @@ async def audio_stream(websocket: WebSocket):
             return
 
         print(f"Received {len(audio_data)} bytes of audio data.")
-        print("Taking screenshot...")
-        take_screenshot()
-        
-        if not os.path.exists(screenshot_path):
-            message = {"type": "error", "data": "Failed to take screenshot."}
-            await websocket.send_text(json.dumps(message))
-            return
+        img = None
+        if not DISABLE_SCREENSHOT:
+            print("Taking screenshot...")
+            try:
+                take_screenshot()
+                if os.path.exists(screenshot_path):
+                    img = Image.open(screenshot_path)
+                else:
+                    print("Screenshot file not found after capture; continuing without image.")
+            except Exception as e:
+                print(f"Screenshot capture failed: {e}. Continuing without image.")
 
-        print("Sending audio and screenshot to Gemini...")
-        img = Image.open(screenshot_path)
-        gemini_audio_file = {'mime_type': 'audio/webm', 'data': audio_data}
+        print("Sending inputs to Gemini (audio" + (" + screenshot" if img else " only") + ")...")
+        # Default to audio/webm if client did not provide mime type
+        gemini_audio_file = {'mime_type': audio_mime_type or 'audio/webm', 'data': audio_data}
 
         prompt = (
             "You are a multi-modal assistant. Analyze the user's audio and the screenshot. "
@@ -99,7 +118,10 @@ async def audio_stream(websocket: WebSocket):
             "IMAGE_PROMPT: <very concise text-to-image prompt>."
         )
         # Ask for a streamed response so we can surface text progressively and collect an image prompt.
-        response_stream = model_text.generate_content([prompt, gemini_audio_file, img], stream=True)
+        parts = [prompt, gemini_audio_file]
+        if img is not None:
+            parts.append(img)
+        response_stream = model_text.generate_content(parts, stream=True)
 
         print("--- Waiting for Gemini Response ---")
         collected_text = ""
@@ -191,7 +213,10 @@ async def audio_stream(websocket: WebSocket):
             print(f"Failed to send error to client: {send_e}")
     finally:
         if os.path.exists(screenshot_path):
-            os.remove(screenshot_path)
-            print(f"Removed screenshot file: {screenshot_path}")
+            try:
+                os.remove(screenshot_path)
+                print(f"Removed screenshot file: {screenshot_path}")
+            except Exception as e:
+                print(f"Failed to remove screenshot file: {e}")
         await websocket.close()
         print("WebSocket connection closed.")
