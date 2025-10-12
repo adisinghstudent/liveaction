@@ -4,6 +4,8 @@
 
 ScreenKnow is a full-stack application that allows you to ask questions about the content on your screen. It uses a FastAPI backend to capture a screenshot and query the Google Gemini API for an analysis, and a Next.js frontend to provide a user interface.
 
+<img width="1512" height="982" alt="image" src="https://github.com/user-attachments/assets/63decee1-ff47-489c-a9d4-748c9792ac3f" />
+
 ## Prerequisites
 
 Before you begin, ensure you have the following installed:
