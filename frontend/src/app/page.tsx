@@ -116,7 +116,7 @@ export default function Home() {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center p-6 md:p-24 bg-transparent text-black">
       <div className="w-full max-w-2xl rounded-2xl border border-white/20 dark:border-white/10 bg-white/10 dark:bg-white/5 backdrop-blur-xl shadow-xl">
-        <h1 className="text-4xl font-bold text-center mb-8 pt-8">ScreenKnow</h1>
+        <h1 className="text-2xl font-normal text-center mb-8 pt-8">ScreenKnow</h1>
         
         <div className="w-full text-center">
             <button 

@@ -5,3 +5,7 @@ Pillow
 mss
 python-multipart
 python-dotenv
+pipecat-ai
+pipecat-ai[deepgram]
+pipecat-ai[openai]
+websockets
